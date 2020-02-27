@@ -10,8 +10,9 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
+
+	v2 "github.com/ovh/cds/sdk/exportentities/v2"
 
 	"github.com/gorilla/mux"
 	yaml "gopkg.in/yaml.v2"
@@ -69,7 +70,7 @@ func (api *API) postTemplateHandler() service.Handler {
 			if err := exportentities.DownloadTemplate(data.ImportURL, t); err != nil {
 				return sdk.NewError(sdk.ErrWrongRequest, err)
 			}
-			wt, err := ReadFromTar(tar.NewReader(t))
+			wt, err := exportentities.ReadTemplateFromTar(tar.NewReader(t))
 			if err != nil {
 				return err
 			}
@@ -105,7 +106,7 @@ func (api *API) postTemplateHandler() service.Handler {
 		}
 
 		// execute template with no instance only to check if parsing is ok
-		if _, err := workflowtemplate.Execute(&data, nil); err != nil {
+		if _, err := workflowtemplate.Parse(data); err != nil {
 			return err
 		}
 
@@ -189,7 +190,7 @@ func (api *API) putTemplateHandler() service.Handler {
 			if err := exportentities.DownloadTemplate(data.ImportURL, t); err != nil {
 				return sdk.NewError(sdk.ErrWrongRequest, err)
 			}
-			wt, err := ReadFromTar(tar.NewReader(t))
+			wt, err := exportentities.ReadTemplateFromTar(tar.NewReader(t))
 			if err != nil {
 				return err
 			}
@@ -229,7 +230,7 @@ func (api *API) putTemplateHandler() service.Handler {
 		clone.Update(data)
 
 		// execute template with no instance only to check if parsing is ok
-		if _, err := workflowtemplate.Execute(&clone, nil); err != nil {
+		if _, err := workflowtemplate.Parse(clone); err != nil {
 			return err
 		}
 
@@ -280,7 +281,7 @@ func (api *API) deleteTemplateHandler() service.Handler {
 	}
 }
 
-func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p *sdk.Project, wt *sdk.WorkflowTemplate, req sdk.WorkflowTemplateRequest) (sdk.WorkflowTemplateResult, error) {
+/*func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p *sdk.Project, wt *sdk.WorkflowTemplate, req sdk.WorkflowTemplateRequest) (sdk.WorkflowTemplateResult, error) {
 	var result sdk.WorkflowTemplateResult
 
 	tx, err := api.mustDB().Begin()
@@ -344,10 +345,12 @@ func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p *sdk.Pr
 		}
 	}
 
-	// execute template with request
-	result, err = workflowtemplate.Execute(wt, wti)
-	if err != nil {
-		return result, err
+	if req.Detached {
+		// execute template with request
+		result, err = workflowtemplate.Execute(wt, wti)
+		if err != nil {
+			return result, err
+		}
 	}
 
 	// parse the generated workflow to find its name an update it in instance if not detached
@@ -366,7 +369,7 @@ func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p *sdk.Pr
 			return result, err
 		}
 
-		templatePath := fmt.Sprintf("%s/%s", wt.Group.Name, wt.Slug)
+		templatePath := wt.Path()
 		wor, err = exportentities.SetTemplate(wor, templatePath)
 		if err != nil {
 			return result, err
@@ -392,6 +395,43 @@ func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p *sdk.Pr
 	}
 
 	return result, nil
+}*/
+
+func (api *API) applyTemplate(ctx context.Context, u sdk.Identifiable, p sdk.Project, wt sdk.WorkflowTemplate, req sdk.WorkflowTemplateRequest) (sdk.WorkflowTemplateResult, error) {
+	wti := sdk.WorkflowTemplateInstance{
+		ID:                      time.Now().Unix(), // set a random id to test template execution and also for detached instance
+		ProjectID:               p.ID,
+		WorkflowTemplateID:      wt.ID,
+		WorkflowTemplateVersion: wt.Version,
+		Request:                 req,
+	}
+
+	// execute template with request
+	result, err := workflowtemplate.Execute(wt, wti)
+	if err != nil {
+		return sdk.WorkflowTemplateResult{}, err
+	}
+
+	if req.Detached {
+		return result, nil
+	}
+
+	w := v2.Workflow{
+		Name:               req.WorkflowName,
+		Template:           wt.PathWithVersion(),
+		TemplateParameters: req.Parameters,
+	}
+
+	buf, err := yaml.Marshal(w)
+	if err != nil {
+		return sdk.WorkflowTemplateResult{}, sdk.NewErrorWithStack(err, sdk.NewErrorFrom(sdk.ErrWrongRequest,
+			"cannot add template info to generated workflow"))
+	}
+
+	// if the template was successfully executed we want to return only the a file with template instance data
+	return sdk.WorkflowTemplateResult{
+		Workflow: string(buf),
+	}, nil
 }
 
 func (api *API) postTemplateApplyHandler() service.Handler {
@@ -450,7 +490,7 @@ func (api *API) postTemplateApplyHandler() service.Handler {
 			return err
 		}
 
-		res, err := api.applyTemplate(ctx, getAPIConsumer(ctx), p, wt, req)
+		res, err := api.applyTemplate(ctx, getAPIConsumer(ctx), *p, *wt, req)
 		if err != nil {
 			return err
 		}
@@ -465,7 +505,19 @@ func (api *API) postTemplateApplyHandler() service.Handler {
 		if withImport {
 			tr := tar.NewReader(buf)
 
-			msgs, wkf, oldWkf, err := workflow.Push(ctx, api.mustDB(), api.Cache, p, tr, nil, getAPIConsumer(ctx), project.DecryptWithBuiltinKey)
+			data, err := exportentities.ExtractWorkflowFromTar(ctx, tr)
+			if err != nil {
+				return err
+			}
+
+			//if data.Workflow.Template != "" {
+			data, err = workflowtemplate.Apply(ctx, api.mustDB(), data)
+			if err != nil {
+				return err
+			}
+			//}
+
+			msgs, wkf, oldWkf, err := workflow.Push(ctx, api.mustDB(), api.Cache, p, data, nil, getAPIConsumer(ctx), project.DecryptWithBuiltinKey)
 			if err != nil {
 				return sdk.WrapError(err, "cannot push generated workflow")
 			}
@@ -600,7 +652,7 @@ func (api *API) postTemplateBulkHandler() service.Handler {
 					}
 
 					// apply and import workflow
-					res, err := api.applyTemplate(ctx, consumer, p, wt, bulk.Operations[i].Request)
+					res, err := api.applyTemplate(ctx, consumer, *p, *wt, bulk.Operations[i].Request)
 					if err != nil {
 						if errD := errorDefer(err); errD != nil {
 							log.Error(ctx, "%v", errD)
@@ -620,7 +672,16 @@ func (api *API) postTemplateBulkHandler() service.Handler {
 
 					tr := tar.NewReader(buf)
 
-					_, wkf, _, err := workflow.Push(ctx, api.mustDB(), api.Cache, p, tr, nil, consumer, project.DecryptWithBuiltinKey)
+					data, err := exportentities.ExtractWorkflowFromTar(ctx, tr)
+					if err != nil {
+						if errD := errorDefer(err); errD != nil {
+							log.Error(ctx, "%v", errD)
+							return
+						}
+						continue
+					}
+
+					_, wkf, _, err := workflow.Push(ctx, api.mustDB(), api.Cache, p, data, nil, consumer, project.DecryptWithBuiltinKey)
 					if err != nil {
 						if errD := errorDefer(sdk.WrapError(err, "cannot push generated workflow")); errD != nil {
 							log.Error(ctx, "%v", errD)
@@ -868,7 +929,7 @@ func (api *API) postTemplatePushHandler() service.Handler {
 		defer r.Body.Close()
 
 		tr := tar.NewReader(bytes.NewReader(btes))
-		wt, err := ReadFromTar(tr)
+		wt, err := exportentities.ReadTemplateFromTar(tr)
 		if err != nil {
 			return err
 		}
@@ -990,68 +1051,4 @@ func (api *API) getTemplateUsageHandler() service.Handler {
 
 		return service.WriteJSON(w, wfs, http.StatusOK)
 	}
-}
-
-// ReadFromTar returns a workflow template from given tar reader.
-func ReadFromTar(tr *tar.Reader) (sdk.WorkflowTemplate, error) {
-	var wt sdk.WorkflowTemplate
-
-	// extract template data from tar
-	var apps, pips, envs [][]byte
-	var wkf []byte
-	var tmpl exportentities.Template
-
-	mError := new(sdk.MultiError)
-	var templateFileName string
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return wt, sdk.NewError(sdk.ErrWrongRequest, sdk.WrapError(err, "Unable to read tar file"))
-		}
-
-		buff := new(bytes.Buffer)
-		if _, err := io.Copy(buff, tr); err != nil {
-			return wt, sdk.NewError(sdk.ErrWrongRequest, sdk.WrapError(err, "Unable to read tar file"))
-		}
-
-		b := buff.Bytes()
-		switch {
-		case strings.Contains(hdr.Name, ".application."):
-			apps = append(apps, b)
-		case strings.Contains(hdr.Name, ".pipeline."):
-			pips = append(pips, b)
-		case strings.Contains(hdr.Name, ".environment."):
-			envs = append(envs, b)
-		case hdr.Name == "workflow.yml":
-			// if a workflow was already found, it's a mistake
-			if len(wkf) != 0 {
-				mError.Append(fmt.Errorf("Two workflow files found"))
-				break
-			}
-			wkf = b
-		default:
-			// if a template was already found, it's a mistake
-			if templateFileName != "" {
-				mError.Append(fmt.Errorf("Two template files found: %s and %s", templateFileName, hdr.Name))
-				break
-			}
-			if err := yaml.Unmarshal(b, &tmpl); err != nil {
-				mError.Append(sdk.WrapError(err, "Unable to unmarshal template %s", hdr.Name))
-				continue
-			}
-			templateFileName = hdr.Name
-		}
-	}
-
-	if !mError.IsEmpty() {
-		return wt, sdk.NewError(sdk.ErrWorkflowInvalid, mError)
-	}
-
-	// init workflow template struct from data
-	wt = tmpl.GetTemplate(wkf, pips, apps, envs)
-
-	return wt, nil
 }

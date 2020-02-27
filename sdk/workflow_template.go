@@ -5,6 +5,7 @@ import (
 	json "encoding/json"
 	"fmt"
 	"strings"
+	"text/template"
 
 	"github.com/ovh/cds/sdk/slug"
 )
@@ -41,6 +42,14 @@ type WorkflowTemplateResult struct {
 	Pipelines    []string
 	Applications []string
 	Environments []string
+}
+
+// WorkflowTemplateParsed struct.
+type WorkflowTemplateParsed struct {
+	Workflow     *template.Template
+	Pipelines    []*template.Template
+	Applications []*template.Template
+	Environments []*template.Template
 }
 
 // WorkflowTemplate struct.
@@ -185,6 +194,14 @@ func (w *WorkflowTemplate) Update(data WorkflowTemplate) {
 	w.Environments = data.Environments
 	w.Version = w.Version + 1
 	w.ImportURL = data.ImportURL
+}
+
+func (w WorkflowTemplate) Path() string {
+	return fmt.Sprintf("%s/%s", w.Group.Name, w.Slug)
+}
+
+func (w WorkflowTemplate) PathWithVersion() string {
+	return fmt.Sprintf("%s:%d", w.Path(), w.Version)
 }
 
 // WorkflowTemplatesToIDs returns ids of given workflow templates.

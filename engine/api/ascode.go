@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/ovh/cds/sdk/exportentities"
+
 	"github.com/gorilla/mux"
 
 	"github.com/ovh/cds/engine/api/application"
@@ -149,7 +151,12 @@ func (api *API) postPerformImportAsCodeHandler() service.Handler {
 			IsDefaultBranch:    ope.Setup.Checkout.Branch == ope.RepositoryInfo.DefaultBranch,
 		}
 
-		allMsg, wrkflw, _, err := workflow.Push(ctx, api.mustDB(), api.Cache, proj, tr, opt, getAPIConsumer(ctx), project.DecryptWithBuiltinKey)
+		data, err := exportentities.ExtractWorkflowFromTar(ctx, tr)
+		if err != nil {
+			return err
+		}
+
+		allMsg, wrkflw, _, err := workflow.Push(ctx, api.mustDB(), api.Cache, proj, data, opt, getAPIConsumer(ctx), project.DecryptWithBuiltinKey)
 		if err != nil {
 			return sdk.WrapError(err, "unable to push workflow")
 		}
@@ -215,7 +222,7 @@ func (api *API) postResyncPRAsCodeHandler() service.Handler {
 			}
 		}
 
-		if _, _, err := sync.SyncAsCodeEvent(ctx, api.mustDB(), api.Cache, *proj, app, getAPIConsumer(ctx).AuthentifiedUser); err != nil {
+		if _, _, err := sync.SyncAsCodeEvent(ctx, api.mustDB(), api.Cache, *proj, *app, getAPIConsumer(ctx).AuthentifiedUser); err != nil {
 			return err
 		}
 		return nil

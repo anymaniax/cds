@@ -3,6 +3,8 @@ package workflowtemplate
 import (
 	"context"
 
+	"github.com/ovh/cds/sdk/exportentities"
+
 	"github.com/go-gorp/gorp"
 
 	"github.com/ovh/cds/engine/api/event"
@@ -56,4 +58,9 @@ func SetTemplateData(ctx context.Context, db gorp.SqlExecutor, p *sdk.Project, w
 	event.PublishWorkflowTemplateInstanceUpdate(ctx, old, *wti, u)
 
 	return nil
+}
+
+func Apply(ctx context.Context, db gorp.SqlExecutor, data exportentities.ExtractedWorkflowFromTar) (exportentities.ExtractedWorkflowFromTar, error) {
+
+	return exportentities.ExtractedWorkflowFromTar{}, nil
 }

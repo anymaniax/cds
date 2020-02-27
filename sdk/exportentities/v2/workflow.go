@@ -3,20 +3,23 @@ package v2
 import (
 	"context"
 	"fmt"
-	"github.com/fsamin/go-dump"
-	"github.com/ovh/cds/sdk"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fsamin/go-dump"
+	"github.com/ovh/cds/sdk"
 )
 
 // Workflow is the "as code" representation of a sdk.Workflow
 type Workflow struct {
-	Name        string `json:"name" yaml:"name" jsonschema_description:"The name of the workflow."`
-	Description string `json:"description,omitempty" yaml:"description,omitempty"`
-	Version     string `json:"version,omitempty" yaml:"version,omitempty" jsonschema_description:"Version for the yaml syntax, latest is v1.0."`
-	Template    string `json:"template,omitempty" yaml:"template,omitempty" jsonschema_description:"Optional path of the template used to generate the workflow."`
+	Name               string            `json:"name" yaml:"name" jsonschema_description:"The name of the workflow."`
+	Description        string            `json:"description,omitempty" yaml:"description,omitempty"`
+	Version            string            `json:"version,omitempty" yaml:"version,omitempty" jsonschema_description:"Version for the yaml syntax, latest is v1.0."`
+	Template           string            `json:"template,omitempty" yaml:"template,omitempty" jsonschema_description:"Optional path of the template used to generate the workflow."`
+	TemplateParameters map[string]string `json:"template_parameters,omitempty" yaml:"template_parameters,omitempty" jsonschema_description:"Optional template parameters."`
 
 	Workflow map[string]NodeEntry   `json:"workflow,omitempty" yaml:"workflow,omitempty" jsonschema_description:"Workflow nodes list."`
 	Hooks    map[string][]HookEntry `json:"hooks,omitempty" yaml:"hooks,omitempty" jsonschema_description:"Workflow hooks list."`
@@ -408,13 +411,22 @@ func (w Workflow) GetWorkflow() (*sdk.Workflow, error) {
 
 	// if there is a template instance id on the workflow export, add it
 	if w.Template != "" {
-		templatePath := strings.Split(w.Template, "/")
+		templatePathWithVersion := strings.Split(w.Template, ":")
+		if len(templatePathWithVersion) != 2 {
+			return nil, sdk.NewErrorFrom(sdk.ErrWrongRequest, "invalid template path, missing version")
+		}
+		templateVersion, err := strconv.ParseInt(templatePathWithVersion[1], 10, 64)
+		if err != nil {
+			return nil, sdk.NewErrorWithStack(err, sdk.NewErrorFrom(sdk.ErrWrongRequest, "invalid template version"))
+		}
+		templatePath := strings.Split(templatePathWithVersion[0], "/")
 		if len(templatePath) != 2 {
-			return nil, sdk.WithStack(fmt.Errorf("Invalid template path"))
+			return nil, sdk.NewErrorFrom(sdk.ErrWrongRequest, "invalid template path, missing template slug or group name")
 		}
 		wf.Template = &sdk.WorkflowTemplate{
-			Group: &sdk.Group{Name: templatePath[0]},
-			Slug:  templatePath[1],
+			Group:   &sdk.Group{Name: templatePath[0]},
+			Slug:    templatePath[1],
+			Version: templateVersion,
 		}
 	}
 

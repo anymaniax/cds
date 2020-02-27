@@ -305,7 +305,12 @@ func (api *API) postWorkflowPushHandler() service.Handler {
 			return sdk.WrapError(err, "cannot load project %s", key)
 		}
 
-		allMsg, wrkflw, oldWrkflw, err := workflow.Push(ctx, db, api.Cache, proj, tr, pushOptions, u, project.DecryptWithBuiltinKey)
+		data, err := exportentities.ExtractWorkflowFromTar(ctx, tr)
+		if err != nil {
+			return err
+		}
+
+		allMsg, wrkflw, oldWrkflw, err := workflow.Push(ctx, db, api.Cache, proj, data, pushOptions, u, project.DecryptWithBuiltinKey)
 		if err != nil {
 			return err
 		}

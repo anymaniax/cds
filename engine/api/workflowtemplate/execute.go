@@ -21,7 +21,7 @@ import (
 	"github.com/ovh/cds/sdk/log"
 )
 
-func prepareParams(wt *sdk.WorkflowTemplate, r sdk.WorkflowTemplateRequest) interface{} {
+func prepareParams(wt sdk.WorkflowTemplate, r sdk.WorkflowTemplateRequest) interface{} {
 	m := make(map[string]interface{}, len(wt.Parameters))
 	for _, p := range wt.Parameters {
 		v, ok := r.Parameters[p.Key]
@@ -97,21 +97,12 @@ func decodeTemplateValue(value string) (string, error) {
 	return string(v), nil
 }
 
-// Execute returns yaml file from template.
-func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (sdk.WorkflowTemplateResult, error) {
-	result := sdk.WorkflowTemplateResult{
-		Pipelines:    make([]string, len(wt.Pipelines)),
-		Applications: make([]string, len(wt.Applications)),
-		Environments: make([]string, len(wt.Environments)),
-	}
-
-	var data map[string]interface{}
-	if instance != nil {
-		data = map[string]interface{}{
-			"id":     instance.ID,
-			"name":   instance.Request.WorkflowName,
-			"params": prepareParams(wt, instance.Request),
-		}
+// Parse return a template with parsed content.
+func Parse(wt sdk.WorkflowTemplate) (sdk.WorkflowTemplateParsed, error) {
+	result := sdk.WorkflowTemplateParsed{
+		Pipelines:    make([]*template.Template, len(wt.Pipelines)),
+		Applications: make([]*template.Template, len(wt.Applications)),
+		Environments: make([]*template.Template, len(wt.Environments)),
 	}
 
 	var multiErr sdk.MultiError
@@ -120,15 +111,9 @@ func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (
 	if err != nil {
 		return result, err
 	}
-	if tmpl, err := parseTemplate("workflow", 0, v); err != nil {
+	result.Workflow, err = parseTemplate("workflow", 0, v)
+	if err != nil {
 		multiErr.Append(err)
-	} else {
-		if data != nil {
-			result.Workflow, err = executeTemplate(tmpl, data)
-			if err != nil {
-				return result, err
-			}
-		}
 	}
 
 	for i, p := range wt.Pipelines {
@@ -136,14 +121,9 @@ func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (
 		if err != nil {
 			return result, err
 		}
-
-		if tmpl, err := parseTemplate("pipeline", i, v); err != nil {
+		result.Pipelines[i], err = parseTemplate("pipeline", i, v)
+		if err != nil {
 			multiErr.Append(err)
-		} else {
-			result.Pipelines[i], err = executeTemplate(tmpl, data)
-			if err != nil {
-				return result, err
-			}
 		}
 	}
 
@@ -152,16 +132,9 @@ func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (
 		if err != nil {
 			return result, err
 		}
-
-		if tmpl, err := parseTemplate("application", i, v); err != nil {
+		result.Applications[i], err = parseTemplate("application", i, v)
+		if err != nil {
 			multiErr.Append(err)
-		} else {
-			if data != nil {
-				result.Applications[i], err = executeTemplate(tmpl, data)
-				if err != nil {
-					return result, err
-				}
-			}
 		}
 	}
 
@@ -170,16 +143,9 @@ func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (
 		if err != nil {
 			return result, err
 		}
-
-		if tmpl, err := parseTemplate("environment", i, v); err != nil {
+		result.Environments[i], err = parseTemplate("environment", i, v)
+		if err != nil {
 			multiErr.Append(err)
-		} else {
-			if data != nil {
-				result.Environments[i], err = executeTemplate(tmpl, data)
-				if err != nil {
-					return result, err
-				}
-			}
 		}
 	}
 
@@ -198,6 +164,54 @@ func Execute(wt *sdk.WorkflowTemplate, instance *sdk.WorkflowTemplateInstance) (
 			Status: sdk.ErrCannotParseTemplate.Status,
 			Data:   errs,
 		}, strings.Join(causes, ", "))
+	}
+
+	return result, nil
+}
+
+// Execute returns yaml file from template.
+func Execute(wt sdk.WorkflowTemplate, instance sdk.WorkflowTemplateInstance) (sdk.WorkflowTemplateResult, error) {
+	result := sdk.WorkflowTemplateResult{
+		Pipelines:    make([]string, len(wt.Pipelines)),
+		Applications: make([]string, len(wt.Applications)),
+		Environments: make([]string, len(wt.Environments)),
+	}
+
+	data := map[string]interface{}{
+		"id":     instance.ID,
+		"name":   instance.Request.WorkflowName,
+		"params": prepareParams(wt, instance.Request),
+	}
+
+	parsedTemplate, err := Parse(wt)
+	if err != nil {
+		return result, err
+	}
+
+	result.Workflow, err = executeTemplate(parsedTemplate.Workflow, data)
+	if err != nil {
+		return result, err
+	}
+
+	for i := range parsedTemplate.Pipelines {
+		result.Pipelines[i], err = executeTemplate(parsedTemplate.Pipelines[i], data)
+		if err != nil {
+			return result, err
+		}
+	}
+
+	for i := range parsedTemplate.Applications {
+		result.Applications[i], err = executeTemplate(parsedTemplate.Applications[i], data)
+		if err != nil {
+			return result, err
+		}
+	}
+
+	for i := range parsedTemplate.Environments {
+		result.Environments[i], err = executeTemplate(parsedTemplate.Environments[i], data)
+		if err != nil {
+			return result, err
+		}
 	}
 
 	return result, nil

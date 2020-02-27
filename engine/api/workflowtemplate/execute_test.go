@@ -11,7 +11,7 @@ import (
 )
 
 func TestExecuteTemplate(t *testing.T) {
-	tmpl := &sdk.WorkflowTemplate{
+	tmpl := sdk.WorkflowTemplate{
 		ID: 42,
 		Parameters: []sdk.WorkflowTemplateParameter{
 			{Key: "withDeploy", Type: sdk.ParameterTypeBoolean, Required: true},
@@ -70,7 +70,7 @@ values:
 		}},
 	}
 
-	instance := &sdk.WorkflowTemplateInstance{
+	instance := sdk.WorkflowTemplateInstance{
 		ID: 5,
 		Request: sdk.WorkflowTemplateRequest{
 			WorkflowName: "my-workflow",
@@ -136,7 +136,7 @@ values:
 }
 
 func TestExecuteTemplateWithError(t *testing.T) {
-	tmpl := &sdk.WorkflowTemplate{
+	tmpl := sdk.WorkflowTemplate{
 		ID: 42,
 		Parameters: []sdk.WorkflowTemplateParameter{
 			{Key: "withDeploy", Type: sdk.ParameterTypeBoolean, Required: true},
@@ -165,7 +165,7 @@ name: Environment-[[if .id]]`)),
 		}},
 	}
 
-	_, err := workflowtemplate.Execute(tmpl, nil)
+	_, err := workflowtemplate.Parse(tmpl)
 	assert.NotNil(t, err)
 	e := sdk.ExtractHTTPError(err, "")
 	assert.Equal(t, sdk.ErrCannotParseTemplate.ID, e.ID)

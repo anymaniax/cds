@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"archive/tar"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ovh/cds/sdk/exportentities"
 
 	"github.com/go-gorp/gorp"
 
@@ -1373,16 +1374,13 @@ func checkPipeline(ctx context.Context, db gorp.SqlExecutor, proj sdk.Project, w
 }
 
 // Push push a workflow from cds files
-func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Project, tr *tar.Reader, opts *PushOption, u sdk.Identifiable, decryptFunc keys.DecryptFunc) ([]sdk.Message, *sdk.Workflow, *sdk.Workflow, error) {
+func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Project, data exportentities.ExtractedWorkflowFromTar,
+	opts *PushOption, u sdk.Identifiable, decryptFunc keys.DecryptFunc) ([]sdk.Message, *sdk.Workflow, *sdk.Workflow, error) {
 	ctx, end := observability.Span(ctx, "workflow.Push")
 	defer end()
 	allMsg := []sdk.Message{}
 
-	data, err := extractFromCDSFiles(ctx, tr)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
+	var err error
 	var workflowExists bool
 	var oldWf *sdk.Workflow
 
@@ -1390,15 +1388,14 @@ func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Proj
 		oldWf = opts.OldWorkflow
 	} else {
 		// load the workflow from database if exists
-		workflowExists, err = Exists(db, proj.Key, data.wrkflw.GetName())
+		workflowExists, err = Exists(db, proj.Key, data.Workflow.GetName())
 		if err != nil {
 			return nil, nil, nil, sdk.WrapError(err, "Cannot check if workflow exists")
 		}
 		if workflowExists {
-			oldWf, err = Load(ctx, db, store, *proj, data.wrkflw.GetName(), LoadOptions{WithIcon: true})
-
+			oldWf, err = Load(ctx, db, store, *proj, data.Workflow.GetName(), LoadOptions{WithIcon: true})
 			if err != nil {
-				return nil, nil, nil, sdk.WrapError(err, "Unable to load existing workflow")
+				return nil, nil, nil, sdk.WrapError(err, "unable to load existing workflow")
 			}
 		}
 	}
@@ -1414,7 +1411,7 @@ func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Proj
 	}
 	defer tx.Rollback() // nolint
 
-	for filename, app := range data.apps {
+	for filename, app := range data.Applications {
 		log.Debug("Push> Parsing %s", filename)
 		var fromRepo string
 		if opts != nil {
@@ -1429,7 +1426,7 @@ func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Proj
 		log.Debug("Push> -- %s OK", filename)
 	}
 
-	for filename, env := range data.envs {
+	for filename, env := range data.Environments {
 		log.Debug("Push> Parsing %s", filename)
 		var fromRepo string
 		if opts != nil {
@@ -1444,7 +1441,7 @@ func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Proj
 		log.Debug("Push> -- %s OK", filename)
 	}
 
-	for filename, pip := range data.pips {
+	for filename, pip := range data.Pipelines {
 		log.Debug("Push> Parsing %s", filename)
 		var fromRepo string
 		if opts != nil {
@@ -1478,9 +1475,9 @@ func Push(ctx context.Context, db *gorp.DbMap, store cache.Store, proj *sdk.Proj
 		importOptions.HookUUID = opts.HookUUID
 	}
 
-	wf, msgList, err := ParseAndImport(ctx, tx, store, *proj, oldWf, data.wrkflw, u, importOptions)
+	wf, msgList, err := ParseAndImport(ctx, tx, store, *proj, oldWf, data.Workflow, u, importOptions)
 	if err != nil {
-		return msgList, nil, nil, sdk.WrapError(err, "unable to import workflow %s", data.wrkflw.GetName())
+		return msgList, nil, nil, sdk.WrapError(err, "unable to import workflow %s", data.Workflow.GetName())
 	}
 
 	// If the workflow is "as-code", it should always be linked to a git repository
